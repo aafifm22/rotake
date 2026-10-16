@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Akun Google yang sudah terverifikasi + terdaftar di koleksi `roles` (id dokumen = email huruf kecil)
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+    function myRole() {
+      return get(/databases/$(database)/documents/roles/$(myEmail())).data.role;
+    }
+    function hasRole() {
+      return signedIn() && exists(/databases/$(database)/documents/roles/$(myEmail()));
+    }
+    function isAdmin() {
+      return hasRole() && myRole() in ['admin', 'superadmin'];
+    }
+    function isSuper() {
+      return hasRole() && myRole() == 'superadmin';
+    }
+
+    // Peran pengguna: hanya super admin yang boleh mengubah; pengguna boleh membaca peran miliknya sendiri
+    match /roles/{email} {
+      allow read: if signedIn() && (myEmail() == email || isSuper());
+      allow create, update: if isSuper() && request.resource.data.role in ['admin', 'superadmin']
+                            && request.resource.data.keys().hasOnly(['role']);
+      allow delete: if isSuper();
+    }
+
+    // Data aplikasi: semua orang (tamu anonim) boleh MELIHAT
+    match /config/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /groups/{id} {
+      allow read: if true;
+      allow create, update: if isAdmin();
+      allow delete: if isSuper();
+    }
+    match /sessions/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}
